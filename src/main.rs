@@ -15,6 +15,14 @@ fn main() {
 
     info!("🎄 {} - {}", crate_name!(), crate_description!());
 
+    if args.command.is_none() && args.day.is_none() && args.year.is_none() {
+        info!(
+            "💡 Use -d/--day and -y/--year to pick a puzzle (e.g. `aoc -d 5 -y 2024`), \
+            or run a subcommand: read, download, submit, calendar"
+        );
+        exit(SUCCESS);
+    }
+
     match build_client(&args).and_then(|client| run(&args, client)) {
         Ok(_) => exit(SUCCESS),
         Err(err) => {
