@@ -50,6 +50,15 @@ const FIRST_PUZZLE_DAY: PuzzleDay = 1;
 const LAST_PUZZLE_DAY: PuzzleDay = 25;
 const RELEASE_TIMEZONE_OFFSET: i32 = -5 * 3600;
 
+/// The last puzzle day of a given event. Every event has run for 25 days,
+/// except 2025, which had only 12.
+fn last_puzzle_day_of_event(year: PuzzleYear) -> PuzzleDay {
+    match year {
+        2025 => 12,
+        _ => LAST_PUZZLE_DAY,
+    }
+}
+
 const SESSION_COOKIE_FILE: &str = "adventofcode.session";
 const HIDDEN_SESSION_COOKIE_FILE: &str = ".adventofcode.session";
 const SESSION_COOKIE_ENV_VAR: &str = "ADVENT_OF_CODE_SESSION";
@@ -696,16 +705,17 @@ impl AocClientBuilder {
         let now = FixedOffset::east_opt(RELEASE_TIMEZONE_OFFSET)
             .unwrap()
             .from_utc_datetime(&Utc::now().naive_utc());
+        let last_day = last_puzzle_day_of_event(event_year);
 
         if event_year == now.year() && now.month() == DECEMBER {
-            if now.day() <= LAST_PUZZLE_DAY {
+            if now.day() <= last_day {
                 self.day(now.day())
             } else {
-                self.day(LAST_PUZZLE_DAY)
+                self.day(last_day)
             }
         } else if event_year < now.year() {
             // For past events, return the last puzzle day
-            self.day(LAST_PUZZLE_DAY)
+            self.day(last_day)
         } else {
             // For future events, return the first puzzle day
             self.day(FIRST_PUZZLE_DAY)
@@ -746,15 +756,16 @@ pub fn last_unlocked_day(year: PuzzleYear) -> Option<PuzzleDay> {
     let now = FixedOffset::east_opt(RELEASE_TIMEZONE_OFFSET)
         .unwrap()
         .from_utc_datetime(&Utc::now().naive_utc());
+    let last_day = last_puzzle_day_of_event(year);
 
     if year == now.year() && now.month() == DECEMBER {
-        if now.day() > LAST_PUZZLE_DAY {
-            Some(LAST_PUZZLE_DAY)
+        if now.day() > last_day {
+            Some(last_day)
         } else {
             Some(now.day())
         }
     } else if year >= FIRST_EVENT_YEAR && year < now.year() {
-        Some(LAST_PUZZLE_DAY)
+        Some(last_day)
     } else {
         None
     }
