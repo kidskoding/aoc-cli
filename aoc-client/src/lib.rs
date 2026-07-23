@@ -3,8 +3,11 @@ use colored::{Color, Colorize};
 use dirs::{config_dir, home_dir};
 use html2md::parse_html;
 use html2text::{
-    from_read, from_read_with_decorator,
-    render::text_renderer::TrivialDecorator,
+    from_read, from_read_with_decorator, parse as parse_html2text,
+    render::text_renderer::{
+        RichAnnotation, RichDecorator, TaggedLine, TextDecorator,
+        TrivialDecorator,
+    },
 };
 use http::StatusCode;
 use log::{debug, info, warn};
@@ -79,6 +82,116 @@ const DARK_GRAY: Color = Color::TrueColor {
     g: 96,
     b: 96,
 };
+
+/// Same as `RichDecorator`, except completed days aren't surrounded with
+/// "*", since `AocClient::show_calendar` already renders the puzzle's own
+/// stars as text and uses the `Strong` annotation purely for colouring.
+#[derive(Clone)]
+struct CalendarDecorator(RichDecorator);
+
+impl CalendarDecorator {
+    fn new() -> Self {
+        CalendarDecorator(RichDecorator::new())
+    }
+}
+
+impl TextDecorator for CalendarDecorator {
+    type Annotation = RichAnnotation;
+
+    fn decorate_link_start(
+        &mut self,
+        url: &str,
+    ) -> (String, Self::Annotation) {
+        self.0.decorate_link_start(url)
+    }
+
+    fn decorate_link_end(&mut self) -> String {
+        self.0.decorate_link_end()
+    }
+
+    fn decorate_em_start(&mut self) -> (String, Self::Annotation) {
+        self.0.decorate_em_start()
+    }
+
+    fn decorate_em_end(&mut self) -> String {
+        self.0.decorate_em_end()
+    }
+
+    fn decorate_strong_start(&mut self) -> (String, Self::Annotation) {
+        (String::new(), RichAnnotation::Strong)
+    }
+
+    fn decorate_strong_end(&mut self) -> String {
+        String::new()
+    }
+
+    fn decorate_strikeout_start(&mut self) -> (String, Self::Annotation) {
+        self.0.decorate_strikeout_start()
+    }
+
+    fn decorate_strikeout_end(&mut self) -> String {
+        self.0.decorate_strikeout_end()
+    }
+
+    fn decorate_code_start(&mut self) -> (String, Self::Annotation) {
+        self.0.decorate_code_start()
+    }
+
+    fn decorate_code_end(&mut self) -> String {
+        self.0.decorate_code_end()
+    }
+
+    fn decorate_preformat_first(&mut self) -> Self::Annotation {
+        self.0.decorate_preformat_first()
+    }
+
+    fn decorate_preformat_cont(&mut self) -> Self::Annotation {
+        self.0.decorate_preformat_cont()
+    }
+
+    fn decorate_image(&mut self, title: &str) -> (String, Self::Annotation) {
+        self.0.decorate_image(title)
+    }
+
+    fn header_prefix(&mut self, level: usize) -> String {
+        self.0.header_prefix(level)
+    }
+
+    fn quote_prefix(&mut self) -> String {
+        self.0.quote_prefix()
+    }
+
+    fn unordered_item_prefix(&mut self) -> String {
+        self.0.unordered_item_prefix()
+    }
+
+    fn ordered_item_prefix(&mut self, i: i64) -> String {
+        self.0.ordered_item_prefix(i)
+    }
+
+    fn make_subblock_decorator(&self) -> Self {
+        CalendarDecorator(self.0.make_subblock_decorator())
+    }
+
+    fn finalise(self) -> Vec<TaggedLine<Self::Annotation>> {
+        self.0.finalise()
+    }
+}
+
+/// Maps calendar day annotations to a pair of ANSI escape sequences to
+/// print before/after the day, colouring it by completion status: gold
+/// for two stars, silver for one star.
+fn calendar_colour(annotation: &RichAnnotation) -> (String, String) {
+    if !colored::control::SHOULD_COLORIZE.should_colorize() {
+        return (String::new(), String::new());
+    }
+    let colour = match annotation {
+        RichAnnotation::Strong => GOLD,
+        RichAnnotation::Emphasis => SILVER,
+        _ => return (String::new(), String::new()),
+    };
+    (format!("\x1b[{}m", colour.to_fg_str()), "\x1b[0m".to_string())
+}
 
 pub type AocResult<T> = Result<T, AocError>;
 
@@ -405,16 +518,16 @@ impl AocClient {
                     .map(|c| c.as_str())
                     .unwrap_or("");
 
-                let stars =
-                    if class.contains("calendar-verycomplete") || all_stars {
-                        "**"
-                    } else if class.contains("calendar-complete") {
-                        "*"
-                    } else {
-                        ""
-                    };
-
-                star_regex.replace(line, stars)
+                if class.contains("calendar-verycomplete") || all_stars {
+                    format!(
+                        "<strong>{}</strong>",
+                        star_regex.replace(line, "**")
+                    )
+                } else if class.contains("calendar-complete") {
+                    format!("<em>{}</em>", star_regex.replace(line, "*"))
+                } else {
+                    star_regex.replace(line, "").to_string()
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -424,11 +537,28 @@ impl AocClient {
 
     pub fn show_calendar(&self) -> AocResult<()> {
         let calendar_html = self.get_calendar_html()?;
-        let calendar_text = from_read_with_decorator(
-            calendar_html.as_bytes(),
-            self.output_width,
-            TrivialDecorator::new(),
-        );
+        let calendar_text = parse_html2text(calendar_html.as_bytes())
+            .render(self.output_width, CalendarDecorator::new())
+            .into_lines()
+            .into_iter()
+            .map(|line| {
+                line.tagged_strings()
+                    .map(|ts| {
+                        let (start, finish) = ts.tag.iter().fold(
+                            (String::new(), String::new()),
+                            |(mut start, mut finish), annotation| {
+                                let (s, f) = calendar_colour(annotation);
+                                start.push_str(&s);
+                                finish.push_str(&f);
+                                (start, finish)
+                            },
+                        );
+                        format!("{start}{}{finish}", ts.s)
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         println!("\n{calendar_text}");
         Ok(())
     }
